@@ -5,7 +5,7 @@ import { HoloApp, type HoloParams, type ImagesState } from './scene.ts';
 
 /** Shared renderer settings — identical across every preset. */
 const RENDER_DEFAULTS = {
-  background: '#0b0c12',
+  background: '#161616',
   exposure: 0.5,
   environment: 0.73,
   bloom: 0.05,
@@ -37,7 +37,7 @@ const PRESET_VALUES: Record<string, PresetBundle> = {
     material: {
       finish: 'Matte',
       baseColor: '#20242d',
-      holoIntensity: 3.78,
+      holoIntensity: 0,
       holoScale: 400,
       bandFreq: 1.1,
       saturation: 1.0,
@@ -309,7 +309,7 @@ export default function App() {
         preset: {
           type: 'select' as const,
           options: ['Holo', 'Chrome', 'Black Cloth'],
-          default: 'Holo',
+          default: 'Chrome',
         },
         finish: {
           type: 'select' as const,
