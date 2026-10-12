@@ -356,7 +356,7 @@ export default function App() {
       },
       render: {
         _collapsed: true,
-        background: { type: 'color' as const, default: RENDER_DEFAULTS.background },
+        background: { type: 'transparent' as const, default: RENDER_DEFAULTS.background },
         exposure: [RENDER_DEFAULTS.exposure, 0.2, 2.5, 0.01],
         environment: [RENDER_DEFAULTS.environment, 0, 3, 0.01],
         bloom: [RENDER_DEFAULTS.bloom, 0, 1.2, 0.01],
