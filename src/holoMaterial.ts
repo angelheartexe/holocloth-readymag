@@ -1,5 +1,4 @@
 import * as THREE from 'three';
-import { makeGrainRoughnessMap } from './textures.ts';
 
 export interface HoloUniforms {
   uHoloIntensity: THREE.IUniform<number>;
@@ -31,14 +30,13 @@ export interface HoloMaterial {
  */
 export function createHoloMaterial(surfaceTexture: THREE.Texture): HoloMaterial {
   // the bump/normal map is loaded asynchronously by the engine (default
-  // scratch texture or a user upload) — none at creation time
-  const roughnessMap = makeGrainRoughnessMap();
+  // scratch texture or a user upload) — none at creation time. No grain
+  // roughness map: its per-texel noise read as speckle on the website build.
 
   const material = new THREE.MeshPhysicalMaterial({
     color: new THREE.Color('#9aa1ad'),
     metalness: 0.95,
     roughness: 0.1,
-    roughnessMap,
     normalScale: new THREE.Vector2(0.5, 0.5),
     clearcoat: 1.0,
     clearcoatRoughness: 0.08,

@@ -98,24 +98,3 @@ export function normalMapFromImage(img: HTMLImageElement, size = 512, strength =
   return heightToNormalTexture(h, size, strength);
 }
 
-/** Subtle grain map used as roughness variation — keeps the matte finish alive. */
-export function makeGrainRoughnessMap(size = 256, seed = 4242): THREE.CanvasTexture {
-  const rand = mulberry32(seed);
-  const canvas = document.createElement('canvas');
-  canvas.width = size; canvas.height = size;
-  const ctx = canvas.getContext('2d')!;
-  const img = ctx.createImageData(size, size);
-  const data = img.data;
-  for (let i = 0; i < size * size; i++) {
-    // mid-gray with mild noise; roughnessMap multiplies material.roughness
-    const v = Math.round(215 + (rand() - 0.5) * 70);
-    data[i * 4] = v; data[i * 4 + 1] = v; data[i * 4 + 2] = v; data[i * 4 + 3] = 255;
-  }
-  ctx.putImageData(img, 0, 0);
-  const tex = new THREE.CanvasTexture(canvas);
-  tex.wrapS = tex.wrapT = THREE.RepeatWrapping;
-  tex.repeat.set(4, 4);
-  tex.colorSpace = THREE.NoColorSpace;
-  return tex;
-}
-
