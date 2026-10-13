@@ -87,7 +87,7 @@ const WHITE = new THREE.Color(0xffffff);
 const RIM_A_COLOR = 0x7fd4ff;
 const RIM_B_COLOR = 0xff9ad5;
 /** Starting camera distance relative to the baked pose (<1 = closer). */
-const CAMERA_ZOOM = 0.25;
+const CAMERA_ZOOM = 0.50;
 /**
  * Where the camera starts looking: the baked pose's cloth center. (The baked
  * target sits right of the cloth to leave room for the panel, which the
