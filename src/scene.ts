@@ -58,6 +58,8 @@ export interface HoloParams {
   };
   render: {
     background: string;
+    transparent: boolean;
+    tintedLights: boolean;
     exposure: number;
     environment: number;
     bloom: number;
@@ -82,6 +84,8 @@ const TONE_MAPPINGS: Record<string, THREE.ToneMapping> = {
 const CLOTH_LONG_SIDE = 3;
 const CLOTH_SEGMENTS = 48;
 const WHITE = new THREE.Color(0xffffff);
+const RIM_A_COLOR = 0x7fd4ff;
+const RIM_B_COLOR = 0xff9ad5;
 
 
 const GrainShader = {
@@ -116,7 +120,8 @@ const GrainShader = {
       // dimension, not an offset, so no pattern travels between frames
       vec2 p = mod(gl_FragCoord.xy, 1024.0);
       float n = gHash(vec3(p, mod(uTime * 120.0, 512.0))) - 0.5;
-      c.rgb += n * uAmount;
+      // scaled by alpha so transparent areas stay clean (no grain haze)
+      c.rgb += n * uAmount * c.a;
       gl_FragColor = c;
     }
   `,
@@ -144,6 +149,9 @@ export class HoloApp {
   private clothSegments = CLOTH_SEGMENTS;
   private currentPR = Math.min(window.devicePixelRatio, 2);
   private background = new THREE.Color('#0b0c12');
+  private transparentBg = false;
+  private rimA: THREE.DirectionalLight;
+  private rimB: THREE.DirectionalLight;
   private clock = new THREE.Clock();
   private elapsed = 0;
   private raycaster = new THREE.Raycaster();
@@ -198,13 +206,15 @@ export class HoloApp {
     pmrem.dispose();
 
     // accent rims for specular interest — cool one side, warm the other
-    const rimA = new THREE.DirectionalLight(0x7fd4ff, 1.1);
+    const rimA = new THREE.DirectionalLight(RIM_A_COLOR, 1.1);
     rimA.position.set(-4, 2.5, -3);
-    const rimB = new THREE.DirectionalLight(0xff9ad5, 0.9);
+    const rimB = new THREE.DirectionalLight(RIM_B_COLOR, 0.9);
     rimB.position.set(4.5, -1.5, -2.5);
     const key = new THREE.DirectionalLight(0xffffff, 0.7);
     key.position.set(1.5, 3, 4);
     this.scene.add(rimA, rimB, key);
+    this.rimA = rimA;
+    this.rimB = rimB;
 
     // surface layer (uploaded graphics) + cloth
     this.surface = new SurfaceLayer();
@@ -341,6 +351,9 @@ export class HoloApp {
     u.uCornerRound.value = p.images.cornerRadius;
 
     this.background.set(p.render.background);
+    this.setTransparentBackground(p.render.transparent);
+    this.rimA.color.set(p.render.tintedLights ? RIM_A_COLOR : 0xffffff);
+    this.rimB.color.set(p.render.tintedLights ? RIM_B_COLOR : 0xffffff);
     this.renderer.toneMappingExposure = p.render.exposure;
     const tm = TONE_MAPPINGS[p.render.toneMapping] ?? THREE.AgXToneMapping;
     if (this.renderer.toneMapping !== tm) this.renderer.toneMapping = tm;
@@ -538,26 +551,31 @@ export class HoloApp {
     this.holoUniforms.uSurfaceMap.value = this.surface.texture;
   }
 
+  /** Live transparent background: the host page shows through the canvas. */
+  private setTransparentBackground(on: boolean) {
+    if (on === this.transparentBg) return;
+    this.transparentBg = on;
+    this.scene.background = on ? null : this.background;
+    this.renderer.setClearColor(0x000000, on ? 0 : 1);
+  }
+
   /** Render one frame at high resolution and download it as a PNG. */
   exportPNG(transparent = false) {
     const w = this.host.clientWidth || window.innerWidth;
     const h = this.host.clientHeight || window.innerHeight;
     const normalPR = this.currentPR;
     const exportPR = Math.min(4, Math.max(2, 3200 / Math.max(w, h)));
-    if (transparent) {
-      this.scene.background = null;
-      this.renderer.setClearColor(0x000000, 0);
-    }
+    // the export's background choice is independent of the live one
+    const liveTransparent = this.transparentBg;
+    this.transparentBg = !transparent; // force the setter to apply
+    this.setTransparentBackground(transparent);
     this.renderer.setPixelRatio(exportPR);
     this.composer.setPixelRatio(exportPR);
     this.renderer.setSize(w, h);
     this.composer.setSize(w, h);
     this.composer.render();
     const url = this.renderer.domElement.toDataURL('image/png');
-    if (transparent) {
-      this.scene.background = this.background;
-      this.renderer.setClearColor(0x000000, 1);
-    }
+    this.setTransparentBackground(liveTransparent);
     this.renderer.setPixelRatio(normalPR);
     this.composer.setPixelRatio(normalPR);
     this.renderer.setSize(w, h);

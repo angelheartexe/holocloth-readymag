@@ -3,9 +3,20 @@ import { createPortal } from 'react-dom';
 import { useDialKitController, DialRoot, DialStore } from 'dialkit';
 import { HoloApp, type HoloParams, type ImagesState } from './scene.ts';
 
+/**
+ * Website build: the control panel is hidden unless the page URL contains
+ * `?controls` (e.g. https://your-site/?controls), so visitors only see the
+ * cloth. Use the panel to tweak, then copy the values into the defaults here.
+ */
+const SHOW_CONTROLS = new URLSearchParams(window.location.search).has('controls');
+
 /** Shared renderer settings — identical across every preset. */
 const RENDER_DEFAULTS = {
   background: '#161616',
+  // let the host page show through behind the cloth
+  transparent: true,
+  // cyan/pink rim lights add a colored sheen; off keeps the cloth neutral
+  tintedLights: false,
   exposure: 0.5,
   environment: 0.73,
   bloom: 0.05,
@@ -40,7 +51,7 @@ const PRESET_VALUES: Record<string, PresetBundle> = {
       holoIntensity: 0,
       holoScale: 400,
       bandFreq: 1.1,
-      saturation: 1.0,
+      saturation: 0,
       hueShift: 0.37,
       sparkle: 0.73,
       specTint: 0,
@@ -241,7 +252,7 @@ function Loader({ percent, hiding }: { percent: number; hiding: boolean }) {
         inset: 0,
         display: 'grid',
         placeItems: 'center',
-        background: '#0b0c12',
+        background: 'transparent',
         zIndex: 2147483600,
         opacity: hiding ? 0 : 1,
         transition: 'opacity 0.5s ease',
@@ -320,7 +331,7 @@ export default function App() {
         holoIntensity: [0, 0, 4, 0.01],
         holoScale: [400, 8, 400, 1],
         bandFreq: [1.1, 0.2, 10, 0.05],
-        saturation: [1, 0, 1, 0.01],
+        saturation: [0, 0, 1, 0.01],
         hueShift: [0.37, 0, 1, 0.01],
         sparkle: [0.73, 0, 2, 0.01],
         specTint: [0, 0, 1, 0.01],
@@ -356,7 +367,9 @@ export default function App() {
       },
       render: {
         _collapsed: true,
-        background: { type: 'transparent' as const, default: RENDER_DEFAULTS.background },
+        transparent: RENDER_DEFAULTS.transparent,
+        background: { type: 'color' as const, default: RENDER_DEFAULTS.background },
+        tintedLights: RENDER_DEFAULTS.tintedLights,
         exposure: [RENDER_DEFAULTS.exposure, 0.2, 2.5, 0.01],
         environment: [RENDER_DEFAULTS.environment, 0, 3, 0.01],
         bloom: [RENDER_DEFAULTS.bloom, 0, 1.2, 0.01],
@@ -615,7 +628,7 @@ export default function App() {
           />,
           bumpAnchor,
         )}
-      <DialRoot position="top-right" defaultOpen productionEnabled />
+      {SHOW_CONTROLS && <DialRoot position="top-right" defaultOpen productionEnabled />}
       {!loaderGone && <Loader percent={loadPercent} hiding={assetsReady} />}
     </>
   );

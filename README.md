@@ -15,6 +15,17 @@ You get a sheet of simulated cloth floating in space. You can grab it, throw it 
 - **Export** — one click PNG, with or without the background.
 - **Versions** — save looks and switch between them while you work.
 
+## Website version
+
+This fork is set up to be embedded on a website (e.g. a Readymag embed/iframe):
+
+- **No rainbow** — holo diffraction, iridescence, specular tint and the cyan/pink rim lights are all off by default, so the cloth shows the graphic in its own colors.
+- **Transparent background** — the page behind the embed shows through. Turn it off with `render → transparent` to use the `background` color instead.
+- **Panel hidden** — visitors just see the cloth. Add `?controls` to the URL (e.g. `https://your-site.vercel.app/?controls`) to bring the panel back for tweaking; to make a change permanent, copy the values into the defaults in `src/App.tsx`.
+- **Your graphic** — the cloth image is `public/holo-bg-2.jpg`; replace that file to change it.
+
+To publish: `npm run build`, then deploy the `dist/` folder (or import the repo into Vercel), and embed the deployed URL in an iframe.
+
 ## Controls
 
 | Action | How |
