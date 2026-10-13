@@ -86,6 +86,14 @@ const CLOTH_SEGMENTS = 48;
 const WHITE = new THREE.Color(0xffffff);
 const RIM_A_COLOR = 0x7fd4ff;
 const RIM_B_COLOR = 0xff9ad5;
+/** Starting camera distance relative to the baked pose (<1 = closer). */
+const CAMERA_ZOOM = 0.72;
+/**
+ * Where the camera starts looking: the baked pose's cloth center. (The baked
+ * target sits right of the cloth to leave room for the panel, which the
+ * website build hides.)
+ */
+const START_TARGET = new THREE.Vector3(0.05, 0.05, -0.13);
 
 
 const GrainShader = {
@@ -197,7 +205,12 @@ export class HoloApp {
     this.scene = new THREE.Scene();
     this.scene.background = this.background;
     this.camera = new THREE.PerspectiveCamera(38, width / height, 0.1, 200);
-    this.camera.position.set(...BAKED_POSE.camera);
+    // same viewing angle as the baked pose, closer and centered on the cloth
+    this.camera.position
+      .set(...BAKED_POSE.camera)
+      .sub(new THREE.Vector3(...BAKED_POSE.target))
+      .multiplyScalar(CAMERA_ZOOM)
+      .add(START_TARGET);
 
     // image-based lighting from a neutral studio room
     const pmrem = new THREE.PMREMGenerator(this.renderer);
@@ -248,7 +261,7 @@ export class HoloApp {
     this.controls.dampingFactor = 0.08;
     this.controls.minDistance = 1.6;
     this.controls.maxDistance = 30;
-    this.controls.target.set(...BAKED_POSE.target);
+    this.controls.target.copy(START_TARGET);
     this.controls.update();
 
     // post: MSAA + half-float HDR chain, bloom, tonemap+sRGB, grain
