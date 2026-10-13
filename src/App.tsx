@@ -21,7 +21,7 @@ const RENDER_DEFAULTS = {
   environment: 0.73,
   bloom: 0.05,
   bloomThreshold: 1.41,
-  noise: 0.345,
+  noise: 0, // film grain; 0 = clean render
   toneMapping: 'Neutral',
   occlusion: true,
   occlusionStrength: 1,
