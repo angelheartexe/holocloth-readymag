@@ -26,6 +26,41 @@ This fork is set up to be embedded on a website (e.g. a Readymag embed/iframe):
 
 To publish: `npm run build`, then deploy the `dist/` folder (or import the repo into Vercel), and embed the deployed URL in an iframe.
 
+## One-word guestbook (`/word`)
+
+A second page in the same Vercel project: visitors **draw a word** describing your work, it's read with Claude (handwriting → text), they confirm it, and it's saved to a Redis database you can read at **`/admin`**.
+
+| Path | What it is |
+|---|---|
+| `/word` | The drawing widget — embed this in Readymag (iframe) |
+| `/admin` | Your private dashboard: word counts, every drawing, delete, CSV export |
+| `api/recognize.ts` | Reads the drawing with Claude, returns the word |
+| `api/words.ts` | Saves an entry (POST), lists them (GET, admin), deletes one (DELETE, admin) |
+
+### Setup on Vercel
+
+1. **Database** — in the Vercel project, *Storage → Create → Upstash (Redis)* and connect it to this project. That adds `KV_REST_API_URL` and `KV_REST_API_TOKEN` automatically. (A plain Upstash database with `UPSTASH_REDIS_REST_URL` / `UPSTASH_REDIS_REST_TOKEN` works too.)
+2. **Environment variables** (*Settings → Environment Variables*):
+   - `ANTHROPIC_API_KEY` — from https://platform.claude.com
+   - `ADMIN_PASSWORD` — any long password; you'll type it on `/admin`
+3. Redeploy.
+
+### Embed in Readymag
+
+Add an *Embed / Code* widget with:
+
+```html
+<iframe src="https://your-site.vercel.app/word" style="width:100%;height:100%;border:0;background:transparent" allowtransparency="true"></iframe>
+```
+
+URL options (combine with `&`): `?theme=dark`, `?ink=%23ff3366` (stroke/button colour), `?bg=%23000000` (page background, transparent by default), `?prompt=One%20word%20for%20my%20work` (the question text), `?font=Georgia`.
+
+### Notes
+
+- Each recognition is one small vision request (~1–2k tokens). Requests are rate-limited per IP (15 reads and 5 submissions per minute).
+- Up to 5,000 most recent entries are kept, with the drawing (a small PNG) alongside each word; the word counts are kept separately and never trimmed.
+- Local development of the API needs the Vercel CLI: `npx vercel link`, `npx vercel env pull .env.local`, `npx vercel dev`.
+
 ## Controls
 
 | Action | How |
