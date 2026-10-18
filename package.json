@@ -5,17 +5,21 @@
   "type": "module",
   "scripts": {
     "dev": "vite",
-    "build": "tsc -b && vite build",
+    "build": "tsc -b && tsc -p api && vite build",
     "preview": "vite preview"
   },
   "dependencies": {
+    "@anthropic-ai/sdk": "^0.135.0",
+    "@upstash/redis": "^1.39.0",
     "dialkit": "^1.4.2",
     "motion": "^12.0.0",
+    "perfect-freehand": "^1.2.3",
     "react": "^19.2.0",
     "react-dom": "^19.2.0",
     "three": "^0.185.1"
   },
   "devDependencies": {
+    "@types/node": "^26.6.5",
     "@types/react": "^19.2.0",
     "@types/react-dom": "^19.2.0",
     "@types/three": "^0.185.0",
