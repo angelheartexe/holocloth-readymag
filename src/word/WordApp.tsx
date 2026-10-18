@@ -30,19 +30,19 @@ function strokeLength({ points }: Stroke): number {
   return length;
 }
 
-// Ink feel: thinning varies the width with speed (or pen pressure) like a brush pen.
+// Ink feel: thinning varies the width with pressure — real pen pressure, or
+// one derived from hand speed (see speedPressure) — like a brush pen.
 function strokeOptions(stroke: Stroke, last: boolean): StrokeOptions {
-  // Short marks (dots on an i, full stops) skip the tapers so they stay visible.
-  const short = strokeLength(stroke) < STROKE_SIZE * 4;
   return {
     size: STROKE_SIZE,
-    thinning: 0.6,
+    thinning: 0.5,
     smoothing: 0.7,
     streamline: 0.3, // light extra smoothing; the lazy brush does the heavy lifting
     easing: (t) => Math.sin((t * Math.PI) / 2),
-    simulatePressure: !stroke.pen,
-    start: { taper: short ? 0 : 6, cap: true },
-    end: { taper: short ? 0 : 14, cap: true },
+    simulatePressure: false,
+    start: { taper: 0, cap: true },
+    // Grows with the stroke so dots stay round and nothing jumps mid-stroke.
+    end: { taper: Math.min(14, strokeLength(stroke) * 0.3), cap: true },
     last,
   };
 }
@@ -113,12 +113,13 @@ export default function WordApp() {
   const [phase, setPhase] = useState<Phase>({ name: 'draw' });
   const [error, setError] = useState<string | null>(null);
 
-  // Photoshop-style "lazy brush": the ink sits at the end of a short string
-  // behind the cursor. Small wobbles inside the string's reach never reach the
+  // Photoshop-style "lazy brush": the ink sits at the end of a short, invisible
+  // string behind the cursor. Small wobbles inside the string's reach never reach the
   // ink, and the ink eases in to catch up whenever you slow down or let go.
   const cursorRef = useRef<Point | null>(null);
   const brushRef = useRef<Point | null>(null);
-  const guideColorRef = useRef('');
+  const pressureRef = useRef(0.5);
+  const lastMoveRef = useRef<{ x: number; y: number; time: number } | null>(null);
 
   const redraw = useCallback(() => {
     const canvas = canvasRef.current;
@@ -130,21 +131,6 @@ export default function WordApp() {
     ctx.fillStyle = getComputedStyle(canvas).color;
     for (const stroke of strokesRef.current) {
       ctx.fill(pathFor(stroke, stroke !== activeRef.current));
-    }
-
-    // The string between cursor and ink, like Photoshop's smoothing guide.
-    const cursor = cursorRef.current;
-    const brush = brushRef.current;
-    if (activeRef.current && cursor && brush) {
-      ctx.strokeStyle = guideColorRef.current;
-      ctx.lineWidth = 1;
-      ctx.beginPath();
-      ctx.moveTo(brush[0], brush[1]);
-      ctx.lineTo(cursor[0], cursor[1]);
-      ctx.stroke();
-      ctx.beginPath();
-      ctx.arc(cursor[0], cursor[1], 3.5, 0, Math.PI * 2);
-      ctx.stroke();
     }
   }, []);
 
@@ -213,23 +199,36 @@ export default function WordApp() {
 
   const locked = phase.name !== 'draw';
 
+  // Without a stylus, fake pressure from hand speed: slow = full, fast = thin,
+  // eased so the width swells and thins gradually instead of flickering.
+  const speedPressure = (ev: PointerEvent): number => {
+    const last = lastMoveRef.current;
+    lastMoveRef.current = { x: ev.clientX, y: ev.clientY, time: ev.timeStamp };
+    if (!last || ev.timeStamp <= last.time) return pressureRef.current;
+    const speed = Math.hypot(ev.clientX - last.x, ev.clientY - last.y) / (ev.timeStamp - last.time);
+    const target = Math.min(1, Math.max(0.3, 1 - speed / 2.5));
+    pressureRef.current += (target - pressureRef.current) * 0.12;
+    return pressureRef.current;
+  };
+
   const pointFrom = (ev: PointerEvent, rect: DOMRect, pen: boolean): Point => [
     ev.clientX - rect.left,
     ev.clientY - rect.top,
-    pen ? ev.pressure : 0.5,
+    pen ? ev.pressure : speedPressure(ev),
   ];
 
   const onPointerDown = (e: React.PointerEvent<HTMLCanvasElement>) => {
     if (locked || (e.pointerType === 'mouse' && e.button !== 0)) return;
     e.currentTarget.setPointerCapture(e.pointerId);
     const pen = e.pointerType === 'pen' && e.pressure > 0;
+    pressureRef.current = 0.6;
+    lastMoveRef.current = null;
     const start = pointFrom(e.nativeEvent, e.currentTarget.getBoundingClientRect(), pen);
     const stroke: Stroke = { points: [start], pen };
     activeRef.current = stroke;
     strokesRef.current.push(stroke);
     cursorRef.current = start;
     brushRef.current = start;
-    guideColorRef.current = getComputedStyle(e.currentTarget).getPropertyValue('--muted').trim() || '#999';
     setStrokeCount(strokesRef.current.length);
     setError(null);
     cancelAnimationFrame(frameRef.current);
@@ -277,7 +276,7 @@ export default function WordApp() {
     cancelAnimationFrame(frameRef.current);
     frameRef.current = 0;
     setStrokeCount(strokesRef.current.length);
-    scheduleRedraw(); // repaint with the finished taper, without the guide
+    scheduleRedraw(); // repaint with the finished taper
   };
 
   const clear = () => {
