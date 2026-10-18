@@ -53,7 +53,7 @@ Add an *Embed / Code* widget with:
 <iframe src="https://your-site.vercel.app/word" style="width:100%;height:100%;border:0;background:transparent" allowtransparency="true"></iframe>
 ```
 
-URL options (combine with `&`): `?theme=dark`, `?ink=%23ff3366` (stroke/button colour), `?bg=%23000000` (page background, transparent by default), `?prompt=One%20word%20for%20my%20work` (the question text), `?font=Georgia`.
+URL options (combine with `&`): `?theme=dark`, `?ink=%23ff3366` (stroke/button colour), `?bg=%23000000` (page background, transparent by default), `?prompt=One%20word%20for%20my%20work` (the question text), `?font=Georgia`, `?smooth=0-100` (Photoshop-style brush smoothing, default 45).
 
 ### Notes
 
