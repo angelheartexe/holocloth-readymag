@@ -17,6 +17,10 @@ type Phase =
 const params = new URLSearchParams(location.search);
 const PROMPT = params.get('prompt') ?? 'Describe my work in one word';
 const STROKE_SIZE = 9;
+// Smoothing strength, 0–100 like Photoshop's slider (?smooth=60 to override).
+const SMOOTHING = Math.min(100, Math.max(0, Number(params.get('smooth') ?? 45)));
+const STRING_LENGTH = SMOOTHING * 0.5; // px the cursor can wander before the ink follows
+const CATCH_UP = 0.25 - SMOOTHING * 0.0015; // share of the gap the ink closes each frame
 
 function strokeLength({ points }: Stroke): number {
   let length = 0;
@@ -26,16 +30,15 @@ function strokeLength({ points }: Stroke): number {
   return length;
 }
 
-// Ink feel: streamline trails the pointer slightly so jitter is absorbed, and
-// thinning varies the width with speed (or pen pressure) like a brush pen.
+// Ink feel: thinning varies the width with speed (or pen pressure) like a brush pen.
 function strokeOptions(stroke: Stroke, last: boolean): StrokeOptions {
   // Short marks (dots on an i, full stops) skip the tapers so they stay visible.
   const short = strokeLength(stroke) < STROKE_SIZE * 4;
   return {
     size: STROKE_SIZE,
     thinning: 0.6,
-    smoothing: 0.65,
-    streamline: 0.55,
+    smoothing: 0.7,
+    streamline: 0.3, // light extra smoothing; the lazy brush does the heavy lifting
     easing: (t) => Math.sin((t * Math.PI) / 2),
     simulatePressure: !stroke.pen,
     start: { taper: short ? 0 : 6, cap: true },
@@ -110,6 +113,13 @@ export default function WordApp() {
   const [phase, setPhase] = useState<Phase>({ name: 'draw' });
   const [error, setError] = useState<string | null>(null);
 
+  // Photoshop-style "lazy brush": the ink sits at the end of a short string
+  // behind the cursor. Small wobbles inside the string's reach never reach the
+  // ink, and the ink eases in to catch up whenever you slow down or let go.
+  const cursorRef = useRef<Point | null>(null);
+  const brushRef = useRef<Point | null>(null);
+  const guideColorRef = useRef('');
+
   const redraw = useCallback(() => {
     const canvas = canvasRef.current;
     if (!canvas) return;
@@ -121,6 +131,21 @@ export default function WordApp() {
     for (const stroke of strokesRef.current) {
       ctx.fill(pathFor(stroke, stroke !== activeRef.current));
     }
+
+    // The string between cursor and ink, like Photoshop's smoothing guide.
+    const cursor = cursorRef.current;
+    const brush = brushRef.current;
+    if (activeRef.current && cursor && brush) {
+      ctx.strokeStyle = guideColorRef.current;
+      ctx.lineWidth = 1;
+      ctx.beginPath();
+      ctx.moveTo(brush[0], brush[1]);
+      ctx.lineTo(cursor[0], cursor[1]);
+      ctx.stroke();
+      ctx.beginPath();
+      ctx.arc(cursor[0], cursor[1], 3.5, 0, Math.PI * 2);
+      ctx.stroke();
+    }
   }, []);
 
   // Coalesce pointer events into one paint per display frame.
@@ -130,6 +155,42 @@ export default function WordApp() {
       frameRef.current = 0;
       redraw();
     });
+  }, [redraw]);
+
+  // Move the ink towards `target`, laying down points every couple of pixels
+  // so the stroke outline stays round on long jumps.
+  const moveBrushTo = (stroke: Stroke, target: Point) => {
+    const brush = brushRef.current!;
+    const dist = Math.hypot(target[0] - brush[0], target[1] - brush[1]);
+    const steps = Math.max(1, Math.ceil(dist / 2));
+    for (let i = 1; i <= steps; i++) {
+      const t = i / steps;
+      stroke.points.push([
+        brush[0] + (target[0] - brush[0]) * t,
+        brush[1] + (target[1] - brush[1]) * t,
+        brush[2] + (target[2] - brush[2]) * t,
+      ]);
+    }
+    brushRef.current = target;
+  };
+
+  // Each frame while drawing, ease the ink part of the way to the cursor.
+  const tick = useCallback(() => {
+    const stroke = activeRef.current;
+    const cursor = cursorRef.current;
+    const brush = brushRef.current;
+    if (!stroke || !cursor || !brush) return;
+    const dist = Math.hypot(cursor[0] - brush[0], cursor[1] - brush[1]);
+    if (dist > 0.5) {
+      moveBrushTo(stroke, [
+        brush[0] + (cursor[0] - brush[0]) * CATCH_UP,
+        brush[1] + (cursor[1] - brush[1]) * CATCH_UP,
+        cursor[2],
+      ]);
+    }
+    redraw();
+    frameRef.current = requestAnimationFrame(tick);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [redraw]);
 
   // Keep the backing store sized to the element at device resolution.
@@ -162,32 +223,61 @@ export default function WordApp() {
     if (locked || (e.pointerType === 'mouse' && e.button !== 0)) return;
     e.currentTarget.setPointerCapture(e.pointerId);
     const pen = e.pointerType === 'pen' && e.pressure > 0;
-    const stroke: Stroke = {
-      points: [pointFrom(e.nativeEvent, e.currentTarget.getBoundingClientRect(), pen)],
-      pen,
-    };
+    const start = pointFrom(e.nativeEvent, e.currentTarget.getBoundingClientRect(), pen);
+    const stroke: Stroke = { points: [start], pen };
     activeRef.current = stroke;
     strokesRef.current.push(stroke);
+    cursorRef.current = start;
+    brushRef.current = start;
+    guideColorRef.current = getComputedStyle(e.currentTarget).getPropertyValue('--muted').trim() || '#999';
+    setStrokeCount(strokesRef.current.length);
     setError(null);
-    scheduleRedraw();
+    cancelAnimationFrame(frameRef.current);
+    frameRef.current = requestAnimationFrame(tick);
   };
 
   const onPointerMove = (e: React.PointerEvent<HTMLCanvasElement>) => {
     const stroke = activeRef.current;
     if (!stroke) return;
-    const events = e.nativeEvent.getCoalescedEvents?.() ?? [e.nativeEvent];
+    const events = e.nativeEvent.getCoalescedEvents?.() ?? [];
     const rect = e.currentTarget.getBoundingClientRect();
     for (const ev of events.length ? events : [e.nativeEvent]) {
-      stroke.points.push(pointFrom(ev, rect, stroke.pen));
+      const cursor = pointFrom(ev, rect, stroke.pen);
+      cursorRef.current = cursor;
+      // Pulled string: the ink only moves once the cursor is further away
+      // than the string length, and then trails exactly that far behind.
+      const brush = brushRef.current!;
+      const dx = cursor[0] - brush[0];
+      const dy = cursor[1] - brush[1];
+      const dist = Math.hypot(dx, dy);
+      if (dist > STRING_LENGTH) {
+        const k = (dist - STRING_LENGTH) / dist;
+        moveBrushTo(stroke, [brush[0] + dx * k, brush[1] + dy * k, cursor[2]]);
+      }
     }
-    scheduleRedraw();
   };
 
   const onPointerUp = () => {
-    if (!activeRef.current) return;
+    const stroke = activeRef.current;
+    if (!stroke) return;
+    // Catch up on stroke end: glide the ink the rest of the way to the cursor.
+    const cursor = cursorRef.current;
+    const brush = brushRef.current;
+    if (cursor && brush) {
+      let b = brush;
+      for (let i = 0; i < 12; i++) {
+        b = [b[0] + (cursor[0] - b[0]) * 0.35, b[1] + (cursor[1] - b[1]) * 0.35, cursor[2]];
+        moveBrushTo(stroke, b);
+      }
+      moveBrushTo(stroke, cursor);
+    }
     activeRef.current = null;
+    cursorRef.current = null;
+    brushRef.current = null;
+    cancelAnimationFrame(frameRef.current);
+    frameRef.current = 0;
     setStrokeCount(strokesRef.current.length);
-    scheduleRedraw(); // repaint with the finished taper
+    scheduleRedraw(); // repaint with the finished taper, without the guide
   };
 
   const clear = () => {
