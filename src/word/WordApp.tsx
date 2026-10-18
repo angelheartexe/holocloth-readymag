@@ -1,7 +1,12 @@
 import { useCallback, useEffect, useRef, useState } from 'react';
+import { getStroke, type StrokeOptions } from 'perfect-freehand';
 
-type Point = { x: number; y: number };
-type Stroke = Point[];
+type Point = [x: number, y: number, pressure: number];
+interface Stroke {
+  points: Point[];
+  pen: boolean; // real stylus pressure vs. pressure simulated from speed
+  path?: Path2D; // cached once the stroke is finished
+}
 type Phase =
   | { name: 'draw' }
   | { name: 'reading' }
@@ -11,36 +16,63 @@ type Phase =
 
 const params = new URLSearchParams(location.search);
 const PROMPT = params.get('prompt') ?? 'Describe my work in one word';
-const STROKE_WIDTH = 6;
+const STROKE_SIZE = 9;
 
-function drawStroke(ctx: CanvasRenderingContext2D, stroke: Stroke) {
-  if (stroke.length === 0) return;
-  ctx.beginPath();
-  ctx.moveTo(stroke[0].x, stroke[0].y);
-  if (stroke.length === 1) {
-    ctx.lineTo(stroke[0].x + 0.01, stroke[0].y);
-  } else {
-    // Smooth the line by curving through midpoints between samples.
-    for (let i = 1; i < stroke.length - 1; i++) {
-      const mx = (stroke[i].x + stroke[i + 1].x) / 2;
-      const my = (stroke[i].y + stroke[i + 1].y) / 2;
-      ctx.quadraticCurveTo(stroke[i].x, stroke[i].y, mx, my);
-    }
-    const last = stroke[stroke.length - 1];
-    ctx.lineTo(last.x, last.y);
+function strokeLength({ points }: Stroke): number {
+  let length = 0;
+  for (let i = 1; i < points.length; i++) {
+    length += Math.hypot(points[i][0] - points[i - 1][0], points[i][1] - points[i - 1][1]);
   }
-  ctx.stroke();
+  return length;
+}
+
+// Ink feel: streamline trails the pointer slightly so jitter is absorbed, and
+// thinning varies the width with speed (or pen pressure) like a brush pen.
+function strokeOptions(stroke: Stroke, last: boolean): StrokeOptions {
+  // Short marks (dots on an i, full stops) skip the tapers so they stay visible.
+  const short = strokeLength(stroke) < STROKE_SIZE * 4;
+  return {
+    size: STROKE_SIZE,
+    thinning: 0.6,
+    smoothing: 0.65,
+    streamline: 0.55,
+    easing: (t) => Math.sin((t * Math.PI) / 2),
+    simulatePressure: !stroke.pen,
+    start: { taper: short ? 0 : 6, cap: true },
+    end: { taper: short ? 0 : 14, cap: true },
+    last,
+  };
+}
+
+// Outline polygon → closed path of quadratic curves through the midpoints.
+function strokePath(stroke: Stroke, last: boolean): Path2D {
+  const outline = getStroke(stroke.points, strokeOptions(stroke, last));
+  const path = new Path2D();
+  if (outline.length < 2) return path;
+  path.moveTo(outline[0][0], outline[0][1]);
+  for (let i = 0; i < outline.length; i++) {
+    const [x0, y0] = outline[i];
+    const [x1, y1] = outline[(i + 1) % outline.length];
+    path.quadraticCurveTo(x0, y0, (x0 + x1) / 2, (y0 + y1) / 2);
+  }
+  path.closePath();
+  return path;
+}
+
+function pathFor(stroke: Stroke, finished: boolean): Path2D {
+  if (finished) return (stroke.path ??= strokePath(stroke, true));
+  return strokePath(stroke, false);
 }
 
 // Crop the drawing to its bounds and render it black-on-white at a small size,
 // which is both what the recogniser reads best and cheap to store.
 function exportDrawing(strokes: Stroke[]): string {
-  const pts = strokes.flat();
-  const minX = Math.min(...pts.map((p) => p.x));
-  const maxX = Math.max(...pts.map((p) => p.x));
-  const minY = Math.min(...pts.map((p) => p.y));
-  const maxY = Math.max(...pts.map((p) => p.y));
-  const pad = STROKE_WIDTH * 3;
+  const pts = strokes.flatMap((s) => s.points);
+  const minX = Math.min(...pts.map((p) => p[0]));
+  const maxX = Math.max(...pts.map((p) => p[0]));
+  const minY = Math.min(...pts.map((p) => p[1]));
+  const maxY = Math.max(...pts.map((p) => p[1]));
+  const pad = STROKE_SIZE * 3;
   const w = maxX - minX + pad * 2;
   const h = maxY - minY + pad * 2;
   const scale = Math.min(1, 640 / Math.max(w, h));
@@ -53,11 +85,8 @@ function exportDrawing(strokes: Stroke[]): string {
   ctx.fillRect(0, 0, canvas.width, canvas.height);
   ctx.scale(scale, scale);
   ctx.translate(pad - minX, pad - minY);
-  ctx.strokeStyle = '#000';
-  ctx.lineWidth = STROKE_WIDTH;
-  ctx.lineCap = 'round';
-  ctx.lineJoin = 'round';
-  strokes.forEach((s) => drawStroke(ctx, s));
+  ctx.fillStyle = '#000';
+  strokes.forEach((s) => ctx.fill(pathFor(s, true)));
   return canvas.toDataURL('image/png');
 }
 
@@ -76,6 +105,7 @@ export default function WordApp() {
   const canvasRef = useRef<HTMLCanvasElement>(null);
   const strokesRef = useRef<Stroke[]>([]);
   const activeRef = useRef<Stroke | null>(null);
+  const frameRef = useRef(0);
   const [strokeCount, setStrokeCount] = useState(0);
   const [phase, setPhase] = useState<Phase>({ name: 'draw' });
   const [error, setError] = useState<string | null>(null);
@@ -87,12 +117,20 @@ export default function WordApp() {
     const dpr = window.devicePixelRatio || 1;
     ctx.setTransform(dpr, 0, 0, dpr, 0, 0);
     ctx.clearRect(0, 0, canvas.width, canvas.height);
-    ctx.strokeStyle = getComputedStyle(canvas).color;
-    ctx.lineWidth = STROKE_WIDTH;
-    ctx.lineCap = 'round';
-    ctx.lineJoin = 'round';
-    strokesRef.current.forEach((s) => drawStroke(ctx, s));
+    ctx.fillStyle = getComputedStyle(canvas).color;
+    for (const stroke of strokesRef.current) {
+      ctx.fill(pathFor(stroke, stroke !== activeRef.current));
+    }
   }, []);
+
+  // Coalesce pointer events into one paint per display frame.
+  const scheduleRedraw = useCallback(() => {
+    if (frameRef.current) return;
+    frameRef.current = requestAnimationFrame(() => {
+      frameRef.current = 0;
+      redraw();
+    });
+  }, [redraw]);
 
   // Keep the backing store sized to the element at device resolution.
   useEffect(() => {
@@ -106,24 +144,32 @@ export default function WordApp() {
     };
     const observer = new ResizeObserver(resize);
     observer.observe(canvas);
-    return () => observer.disconnect();
+    return () => {
+      observer.disconnect();
+      cancelAnimationFrame(frameRef.current);
+    };
   }, [redraw]);
 
   const locked = phase.name !== 'draw';
 
-  const pointFrom = (e: React.PointerEvent<HTMLCanvasElement>): Point => {
-    const rect = e.currentTarget.getBoundingClientRect();
-    return { x: e.clientX - rect.left, y: e.clientY - rect.top };
-  };
+  const pointFrom = (ev: PointerEvent, rect: DOMRect, pen: boolean): Point => [
+    ev.clientX - rect.left,
+    ev.clientY - rect.top,
+    pen ? ev.pressure : 0.5,
+  ];
 
   const onPointerDown = (e: React.PointerEvent<HTMLCanvasElement>) => {
     if (locked || (e.pointerType === 'mouse' && e.button !== 0)) return;
     e.currentTarget.setPointerCapture(e.pointerId);
-    const stroke = [pointFrom(e)];
+    const pen = e.pointerType === 'pen' && e.pressure > 0;
+    const stroke: Stroke = {
+      points: [pointFrom(e.nativeEvent, e.currentTarget.getBoundingClientRect(), pen)],
+      pen,
+    };
     activeRef.current = stroke;
     strokesRef.current.push(stroke);
     setError(null);
-    redraw();
+    scheduleRedraw();
   };
 
   const onPointerMove = (e: React.PointerEvent<HTMLCanvasElement>) => {
@@ -131,14 +177,17 @@ export default function WordApp() {
     if (!stroke) return;
     const events = e.nativeEvent.getCoalescedEvents?.() ?? [e.nativeEvent];
     const rect = e.currentTarget.getBoundingClientRect();
-    for (const ev of events) stroke.push({ x: ev.clientX - rect.left, y: ev.clientY - rect.top });
-    redraw();
+    for (const ev of events.length ? events : [e.nativeEvent]) {
+      stroke.points.push(pointFrom(ev, rect, stroke.pen));
+    }
+    scheduleRedraw();
   };
 
   const onPointerUp = () => {
     if (!activeRef.current) return;
     activeRef.current = null;
     setStrokeCount(strokesRef.current.length);
+    scheduleRedraw(); // repaint with the finished taper
   };
 
   const clear = () => {
@@ -147,13 +196,13 @@ export default function WordApp() {
     setStrokeCount(0);
     setError(null);
     setPhase({ name: 'draw' });
-    redraw();
+    scheduleRedraw();
   };
 
   const undo = () => {
     strokesRef.current.pop();
     setStrokeCount(strokesRef.current.length);
-    redraw();
+    scheduleRedraw();
   };
 
   const read = async () => {
